@@ -29,6 +29,22 @@ if [ -z "$SHA_DARWIN_AARCH64" ] || [ -z "$SHA_LINUX_AARCH64" ] || [ -z "$SHA_LIN
     exit 1
 fi
 
+# Read the firmware filename from the checksum-verified release bundle so
+# Linux installation tracks the firmware shipped with each release.
+BUNDLE=$(mktemp)
+trap 'rm -f "$BUNDLE"' EXIT HUP INT TERM
+gh release download "v${VERSION}" --repo "$REPO" \
+    --pattern 'microsandbox-linux-x86_64.tar.gz' --output "$BUNDLE" --clobber
+ACTUAL_SHA=$(shasum -a 256 "$BUNDLE" | awk '{print $1}')
+[ "$ACTUAL_SHA" = "$SHA_LINUX_X86_64" ] || { echo "Error: bundle checksum mismatch"; exit 1; }
+FIRMWARE_VERSION=$(tar -tzf "$BUNDLE" | sed -nE 's@^(\./)?libkrunfw\.so\.([0-9]+\.[0-9]+\.[0-9]+)$@\2@p')
+if ! printf '%s\n' "$FIRMWARE_VERSION" | awk 'END { exit !(NR == 1 && $0 ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) }'; then
+    echo "Error: expected one versioned libkrunfw library in the release bundle"
+    exit 1
+fi
+FIRMWARE_ABI=${FIRMWARE_VERSION%%.*}
+sed -i.bak "s/^  LIBKRUNFW_VERSION = \".*\"/  LIBKRUNFW_VERSION = \"${FIRMWARE_VERSION}\"/; s/^  LIBKRUNFW_ABI = \".*\"/  LIBKRUNFW_ABI = \"${FIRMWARE_ABI}\"/" "$FORMULA"
+
 # Update version
 sed -i.bak "s/^  version \".*\"/  version \"${VERSION}\"/" "$FORMULA"
 
